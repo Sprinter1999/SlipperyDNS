@@ -192,6 +192,7 @@ class IDrecord:
         self.raw_id = raw_id
         self.unique_id = new_id
         self.respond_address = addr
+        self.create_time = datetime.datetime.now()
 
 #TODO:从dnsrelay.txt种读取本地 域名-ip 映射表
 def getTable(fileName, domain_ip):
@@ -367,10 +368,10 @@ def main():
                 ip_write=str(getMsg[-4]) + "." + str(getMsg[-3]) + "." + str(getMsg[-2]) + "." + str(getMsg[-1])
                 
                 if not(RecvDp.name in domain_ip):
-                    output=open(local_table,"a")
-                    output.write(ip_write + " ")
-                    output.write(RecvDp.name + "\n")
-                    output.close()  
+                    # output=open(local_table,"a")
+                    # output.write(ip_write + " ")
+                    # output.write(RecvDp.name + "\n")
+                    # output.close()  
                     domain_ip[RecvDp.name]=ip_write
                 
                 # correspondSRC=queryDict.get(RecvDp.ID)
@@ -392,7 +393,22 @@ def main():
 
             else:
                 pass
-                
+        
+        #处理超时询问
+        delete_list = []
+        now_time = datetime.datetime.now()
+        for each_IDrecord in id_map:
+            delta_time = (now_time - id_map[each_IDrecord].create_time).total_seconds()
+            # print(delta_time)
+            if delta_time >= 1.0:
+                delete_list.append(each_IDrecord)
+        for each in delete_list:
+            del id_map[each]
+            if debug_level >= 1:
+                print("发生超时！")
+        del delete_list
+
+
         if debug_level>=1:
             print("********************************************************************************")
             print()
