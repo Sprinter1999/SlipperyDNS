@@ -185,7 +185,7 @@ class IDsource:
     def getSrc(self,IP,Port,idsrc):
         self.addr = (IP,Port)
         self.IDsrc = idsrc
-        self.rawID=idsrc
+        self.rawID = idsrc
 
 class IDrecord:
     def set_record(self, raw_id, new_id, addr):
@@ -240,6 +240,7 @@ def main():
 
     startTime=datetime.datetime.now()
     
+    task_number = 0
     #不断收发报文
     while True:
         # Receive DNS package and parse it
@@ -252,6 +253,8 @@ def main():
             name_length=RecvDp.QueryAnalysis(getMsg)
             if debug_level>=1:
                 print("********************************************************************************")
+                print("处理" + str(task_number) + "号报文：")
+                task_number += 1
         except:
             continue
 
@@ -407,7 +410,6 @@ def main():
             if debug_level >= 1:
                 print("发生超时！")
         del delete_list
-
 
         if debug_level>=1:
             print("********************************************************************************")
