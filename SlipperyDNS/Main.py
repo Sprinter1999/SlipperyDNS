@@ -113,7 +113,7 @@ Additional recoreds表示附加区域的数量
 
 #TODO:一下是全局变量
 shield_ip="0.0.0.0"
-default_TTL=176800                  #稳定资源记录生存时间为2天，暂时不懂有什么用
+default_TTL=176800                  #稳定资源记录生存时间为2天
 buf_size=512                        #传输缓冲区大小，每次接收or发送都以它为单位
 local_table="dnsrelay.txt"          #默认本地对照表
 trans_form={}                       #ID转换表
@@ -181,28 +181,48 @@ class DNSPackage:
         print("NSCOUNT " + str(self.NSCOUNT) + ",", end=' ')
         print("ARCOUNT " + str(self.ARCOUNT))
 
-class IDsource:
-    def getSrc(self,IP,Port,idsrc):
-        self.addr = (IP,Port)
-        self.IDsrc = idsrc
-        self.rawID = idsrc
-
 class IDrecord:
+    #存档发往DNS服务器的查询
     def set_record(self, raw_id, new_id, addr):
         self.raw_id = raw_id
         self.unique_id = new_id
         self.respond_address = addr
         self.create_time = datetime.datetime.now()
 
+class DomainResource:
+    def init(self):
+        self.ipv4_table = []
+        self.isShielded = False
+        self.TTL = default_TTL
+        self.create_time = datetime.datetime.now()
+    def append_ipv4(self, ipv4_address):
+        self.ipv4_table.append(ipv4_address)
+    def set_shield(self):
+        self.isShielded = True
+    def set_TTL(self, time_to_live):
+        self.TTL = time_to_live
+    def is_in_ceck(self, ip):
+        if ip in self.ipv4_table:
+            return True
+        else:
+            return False
+
 #TODO:从dnsrelay.txt种读取本地 域名-ip 映射表
 def getTable(fileName, domain_ip):
     f = open(fileName)
     # 按照文法进行解析每一行的映射，将映射表插入
     for each_line in f:
+        domain_resource = DomainResource()
+        domain_resource.init()
+        # print(domain_resource)
         flag = each_line.find(" ")
         ip = each_line[:flag]
         domain = each_line[(flag + 1):(len(each_line) - 1)].casefold()
-        domain_ip[domain] = ip
+        if ip == shield_ip:
+            domain_resource.set_shield()
+        else: 
+            domain_resource.append_ipv4(ip)
+        domain_ip[domain] = domain_resource
 
 #TODO:整体Main函数设计
 def main():
@@ -252,11 +272,22 @@ def main():
             RecvDp=DNSPackage()
             name_length=RecvDp.QueryAnalysis(getMsg)
             if debug_level>=1:
-                print("********************************************************************************")
-                print("处理" + str(task_number) + "号报文：")
+                print("******************************]"+(task_number)+"[**************************************************")
                 task_number += 1
         except:
             continue
+        
+        #处理错误帧
+        if RecvDp.RCODE != 0:
+            if debug_level >= 1:
+                if RecvDp.RCODE == 2:
+                    print("服务器错误！")
+                elif RecvDp.RCODE == 3:
+                    print("名字错误！")
+                else:
+                    print("其他错误！")
+            continue
+            
 
         #根据接收到的包，进行分情况处理：
         #收到查询报文包：
@@ -264,43 +295,65 @@ def main():
             # and RecvDp.qtype==1
             # 若在本地查询表能找到这个域名
             if domain_ip.get(RecvDp.name)!=None:
+                local_resource = domain_ip.get(RecvDp.name)
+                now_time = datetime.datetime.now()
+                delta_time = (now_time - local_resource.create_time).total_seconds()
+                new_live_time = local_resource.TTL - int(delta_time)
+                if new_live_time > 0:
+                    local_resource.set_TTL(new_live_time)
+                else:
+                    del domain_ip[RecvDp.name]
+
+
+            if domain_ip.get(RecvDp.name)!=None:
                 # 若这个ip并非0.0.0.0,我们正常构造
-                if domain_ip.get(RecvDp.name) != shield_ip:
-                    respond = bytearray(32 + name_length)
-                    respond[0] = RecvDp.ID >> 8
-                    respond[1] = RecvDp.ID % 256
-                    respond[2] = 0x81
-                    respond[3] = 0x80
-                    respond[4] = 0x0
-                    respond[5] = 0x1
-                    respond[6] = 0x0
-                    respond[7] = 0x1
-                    respond[8] = 0x0
-                    respond[9] = 0x0
-                    respond[10] = 0x0
-                    respond[11] = 0x0
-                    for i in range(12, 16 + name_length):
-                        respond[i] = getMsg[i]
-                    flag = name_length + 16
-                    respond[flag] = 0xc0
-                    respond[flag + 1] = 0x0c
-                    respond[flag + 2] = 0x0
-                    respond[flag + 3] = 0x1
-                    respond[flag + 4] = 0x0
-                    respond[flag + 5] = 0x1
-                    respond[flag + 6] = default_TTL >> 24
-                    respond[flag + 7] = (default_TTL >> 16) % 256
-                    respond[flag + 8] = (default_TTL >> 8) % 256
-                    respond[flag + 9] = default_TTL % 256
-                    respond[flag + 10] = 0x0
-                    respond[flag + 11] = 0x4
-                    getIP = domain_ip.get(RecvDp.name)
-                    IPtuple = getIP.split(sep='.')
-                    respond[flag + 12] = int(IPtuple[0])
-                    respond[flag + 13] = int(IPtuple[1])
-                    respond[flag + 14] = int(IPtuple[2])
-                    respond[flag + 15] = int(IPtuple[3])
-                    server.sendto(bytes(respond), addr)
+                print(1)
+                if domain_ip.get(RecvDp.name).isShielded == False:  
+                    if RecvDp.qtype == 1:
+                        answer_number = len(local_resource.ipv4_table)
+                        ip_list = local_resource.ipv4_table
+                        time_to_live = local_resource.TTL
+
+                        #前半部分
+                        respond = bytearray(16 + name_length + 16 * answer_number)
+                        respond[0] = RecvDp.ID >> 8
+                        respond[1] = RecvDp.ID % 256
+                        respond[2] = 0x81
+                        respond[3] = 0x80
+                        respond[4] = 0x0
+                        respond[5] = 0x1
+                        respond[6] = hex(answer_number >> 8)    #answer_number
+                        respond[7] = hex(answer_number % 256)
+                        respond[8] = 0x0
+                        respond[9] = 0x0
+                        respond[10] = 0x0
+                        respond[11] = 0x0
+                        for i in range(12, 16 + name_length):
+                            respond[i] = getMsg[i]
+                        flag = name_length + 16
+
+                        #后部answer部分16个字节一组
+                        for each_ip in ip_list:
+                            respond[flag] = 0xc0
+                            respond[flag + 1] = 0x0c
+                            respond[flag + 2] = 0x0
+                            respond[flag + 3] = 0x1     #ipv4
+                            respond[flag + 4] = 0x0
+                            respond[flag + 5] = 0x1
+                            respond[flag + 6] = time_to_live >> 24
+                            respond[flag + 7] = (time_to_live >> 16) % 256
+                            respond[flag + 8] = (time_to_live >> 8) % 256
+                            respond[flag + 9] = time_to_live % 256
+                            respond[flag + 10] = 0x0
+                            respond[flag + 11] = 0x4
+
+                            IPtuple = each_ip.split(sep='.')
+                            respond[flag + 12] = int(IPtuple[0])
+                            respond[flag + 13] = int(IPtuple[1])
+                            respond[flag + 14] = int(IPtuple[2])
+                            respond[flag + 15] = int(IPtuple[3])
+                            flag += 16
+                        server.sendto(bytes(respond), addr)
                 # 若IP地址为"0.0.0.0"，则按DNS报文规则创建字符数组，返回差错信息并发回客户端
                 else:
                     respond = bytearray(16 + name_length)
@@ -319,6 +372,7 @@ def main():
                     for i in range(12, 16 + name_length):
                         respond[i] = getMsg[i]
                     server.sendto(bytes(respond), addr)
+
                 query_time=datetime.datetime.now()
                 if debug_level >= 1:
                     print("收到一次本地查询报文, 当前时间戳: ",query_time)
@@ -340,6 +394,7 @@ def main():
                 # print((nowTime-startTime).total_seconds(), end=":  ")
                 # print("Send a Query to DNS.")
 
+                print("ask remote DNS")
                 if RecvDp.ID in id_map:
                     new_id = random.randint(0,2**16 - 1)
                     while new_id in id_map:
@@ -364,35 +419,49 @@ def main():
             
         # 若收到响应包
         if RecvDp.QR==1:
-            
-            if(RecvDp.ID in id_map):
-
-                ip_write=''
-                ip_write=str(getMsg[-4]) + "." + str(getMsg[-3]) + "." + str(getMsg[-2]) + "." + str(getMsg[-1])
+            if (RecvDp.ID in id_map) and (RecvDp.ARCOUNT == 0) and (RecvDp.NSCOUNT == 0):
+                #维护本地资源表
+                answer_number = RecvDp.ANCOUNT
+                print(RecvDp.name + " :     " + str(answer_number))
+                if not (RecvDp.name in domain_ip):
+                    new_resource = DomainResource()
+                    new_resource.init()
+                    time_to_live = default_TTL
+                else:
+                    new_resource = domain_ip[RecvDp.name]
+                    time_to_live = new_resource.TTL
+                if answer_number > 0:
+                    flag = 0
+                    while True:
+                        if (getMsg[flag-14] << 8) + getMsg[flag-13] == 1: #ipv4
+                            time_to_live = (getMsg[flag-10] << 24) + (getMsg[flag-9] << 16) + (getMsg[flag-8] << 8) + getMsg[flag-7]
+                            ip_write=""
+                            ip_write=str(getMsg[flag-4]) + "." + str(getMsg[flag-3]) + "." + str(getMsg[flag-2]) + "." + str(getMsg[flag-1])
+                            if not new_resource.is_in_ceck(ip_write):
+                                new_resource.append_ipv4(ip_write)
+                                print("Write down: " + ip_write)
+                            flag -= 16
+                        else:
+                            break
+                new_resource.TTL = time_to_live
                 
-                if not(RecvDp.name in domain_ip):
-                    # output=open(local_table,"a")
-                    # output.write(ip_write + " ")
-                    # output.write(RecvDp.name + "\n")
-                    # output.close()  
-                    domain_ip[RecvDp.name]=ip_write
                 
                 # correspondSRC=queryDict.get(RecvDp.ID)
-                unique_id = (getMsg[0] << 8) + getMsg[1]
-                raw_id = id_map[unique_id].raw_id 
-                getMsg[0] = raw_id >> 8
-                getMsg[1] = raw_id % 256
-                respond_address = id_map[unique_id].respond_address
-                del id_map[unique_id]
-                server.sendto(bytes(getMsg), respond_address)
-                if debug_level>=1:
-                    response_time=datetime.datetime.now()
-                    print("收到一次来自DNS服务器的响应报文，当前时间戳: ",response_time)
-                if debug_level==1:
-                    print("经过消息ID转换，转换如下：",hex(unique_id)," -> ",hex(raw_id)," ,查询的域名如下: ",RecvDp.name)
-                elif debug_level==2:
-                    print("经过消息ID转换，转换信息如下",hex(unique_id)," -> ",hex(raw_id)," ,查询的域名如下: ",RecvDp.name, "\n详细冗长的调试信息如下: ")
-                    RecvDp.output()
+            unique_id = (getMsg[0] << 8) + getMsg[1]
+            raw_id = id_map[unique_id].raw_id 
+            getMsg[0] = raw_id >> 8
+            getMsg[1] = raw_id % 256
+            respond_address = id_map[unique_id].respond_address
+            del id_map[unique_id]
+            server.sendto(bytes(getMsg), respond_address)
+            if debug_level>=1:
+                response_time=datetime.datetime.now()
+                print("收到一次来自DNS服务器的响应报文，当前时间戳: ",response_time)
+            if debug_level==1:
+                print("经过消息ID转换，转换如下：",hex(unique_id)," -> ",hex(raw_id)," ,查询的域名如下: ",RecvDp.name)
+            elif debug_level==2:
+                print("经过消息ID转换，转换信息如下",hex(unique_id)," -> ",hex(raw_id)," ,查询的域名如下: ",RecvDp.name, "\n详细冗长的调试信息如下: ")
+                RecvDp.output()
 
             else:
                 pass
