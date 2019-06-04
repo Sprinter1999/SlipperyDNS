@@ -279,19 +279,8 @@ def main():
             name_length=RecvDp.QueryAnalysis(getMsg)
             if debug_level>=1:
                 task_number += 1
-                print("*********************************Order[" + str(task_number) + "]**************************************")
+                print("********************************Order[" + str(task_number) + "]**************************************")
         except:
-            continue
-
-        #处理错误帧
-        if (RecvDp.RCODE != 0) and (RecvDp.qtype != 12):
-            if debug_level >= 1:
-                if RecvDp.RCODE == 2:
-                    print("服务器错误！")
-                elif (RecvDp.RCODE == 3):
-                    print("名字错误！")
-                else:
-                    print("其他错误！")
             continue
 
         #根据接收到的包，进行分情况处理：
