@@ -362,6 +362,7 @@ def main():
                     for i in range(12, 16 + name_length):
                         respond[i] = getMsg[i]
                     server.sendto(bytes(respond), addr)
+                    print("本地屏蔽的ipv4查询")
                 query_time=datetime.datetime.now()
                 if debug_level >= 1:
                     print("收到一次本地查询报文, 当前时间戳: ",query_time)
@@ -370,6 +371,33 @@ def main():
                 elif debug_level==2:
                     print("本地不转换ID, 查询的域名为: ",RecvDp.name,", 详细冗长调试信息如下:")
                     RecvDp.output()
+
+            elif (RecvDp.name in domain_ip) and (RecvDp.qtype == 28) and (domain_ip.get(RecvDp.name).isShielded == True):
+                respond = bytearray(16 + name_length)
+                respond[0] = RecvDp.ID >> 8
+                respond[1] = RecvDp.ID % 256
+                respond[2] = 0x81
+                respond[3] = 0x83
+                respond[4] = 0x0
+                respond[5] = 0x1
+                respond[6] = 0x0
+                respond[7] = 0x0
+                respond[8] = 0x0
+                respond[9] = 0x0
+                respond[10] = 0x0
+                respond[11] = 0x0
+                for i in range(12, 16 + name_length):
+                    respond[i] = getMsg[i]
+                server.sendto(bytes(respond), addr)
+                if debug_level >= 1:
+                    print("收到一次本地查询报文, 当前时间戳: ",query_time)
+                    print("本地屏蔽的ipv6查询")
+                if debug_level==1:
+                    print("本地不转换ID,当前消息ID:",RecvDp.ID,", 查询的域名为: ",RecvDp.name)
+                elif debug_level==2:
+                    print("本地不转换ID, 查询的域名为: ",RecvDp.name,", 详细冗长调试信息如下:")
+                    RecvDp.output()
+
 
             # 若本地查询失败，则转向外部dns服务器获取ip
             else:
